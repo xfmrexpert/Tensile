@@ -105,6 +105,8 @@ through `InternalsVisibleTo`; a consumer of the package cannot.
 | `src/Tensile.Kernels/*.cs` | As before: kernels, packing, Gemm/ParallelGemm/GemmDispatch, ColumnOps, Pivoting, PanelProduct, Triangular, Lu, Norms, Reference |
 | `src/Tensile.Interop.Blis/` | Native `bli_dgemm` binding + dispatch/ABI queries, its own package; `README.md` carries the `TENSILE_BLIS_LIBRARY` warning |
 | `tests/Tensile.Fuzz/` | SharpFuzz harness: an input is a script of operations over hostile integers; the property is I5. Nightly under afl++; `--self-check` replays the seed corpus per PR |
+| `tests/Tensile.PackageSmoke/`, `tests/package-smoke.sh` | A consumer of the packed `.nupkg`, outside the solution, restoring only from the local pack folder into a throwaway cache; the script packs, inspects the contents (both DLLs, no dependencies, the source commit) and runs it. CI on every push; the publish workflow on the package it pushes |
+| `.github/workflows/publish.yml` | On a `v*` tag of a commit on `main`: test, pack at the tag's version, smoke-test, push to GitHub Packages |
 | `tests/Tensile.Tests/` | xunit.v3, 1636 tests; `Invariants/` is the secure-by-design spec, all green; kernel-generic contracts run per kernel via `IKernelCase` markers |
 | `bench/run-measurements.sh` | Runs every measurement the open items wait on, each pinned or unpinned as it requires and at `--iterationCount 31`, into a dated results directory |
 | `bench/Tensile.Benchmarks/` | BenchmarkDotNet: GEMM vs BLIS (one class, interleaved — see finding 12), serial vs threaded, kernel ceiling, LU block-size sweep, API overhead (what the security migration cost), thread scaling, serial/threaded crossover, serial cache-blocking sweep with both driver and dispatch arms, 4M complex GEMM against real GEMM and the embedded route, native complex `Expm`/`Expmv` against the embedded route |
@@ -969,6 +971,22 @@ The complex estimator's exactness by ensemble is in finding 8.
     an order of magnitude. The native complex `expmv` removes the whole
     complex shift and needs no such handling; the embedded oracle keeps it.
 
+16. **A package nothing installs is not verified by anything.** `dotnet pack`
+    had always succeeded, and the package it made could never have worked:
+    it held `Tensile.dll` alone and declared a dependency on a
+    `Tensile.Kernels` package that does not exist, because the kernel project
+    was marked not packable and a plain project reference becomes a package
+    dependency. A comment in that project, and a sentence in the security
+    design, both said the kernels shipped inside the package. 1600 tests
+    passed throughout, because every one of them references the projects.
+    Found the first time anyone looked inside the `.nupkg`. The fix is a
+    private project reference plus a target that puts the kernel DLL in
+    `lib/`; the guard is `tests/package-smoke.sh`, which installs the real
+    package into a consumer that can see only what a user sees — and which
+    fails on the old project file, checked by restoring it. Finding 10 one
+    level out: verification has to reach the artifact that ships, not the
+    code it was built from.
+
 ---
 
 # Design decisions and why
@@ -1076,6 +1094,20 @@ The complex estimator's exactness by ensemble is in finding 8.
   the kernel's pivots — far stronger than a residual. `SolveTransposed`
   became `SolveAdjoint` on the decomposition in the same change, for the
   reason the operator interface did.
+
+- **One package, two assemblies, published to GitHub Packages.** The
+  public/kernel assembly split is a security property (I4: the compiler
+  proves the public assembly has no unsafe code), so it survives packaging:
+  `Tensile.Kernels.dll` goes into the `Tensile` package's `lib/` beside
+  `Tensile.dll` rather than being a package of its own, which would invite a
+  direct reference and add a second version to keep in step. PDBs are
+  embedded with SourceLink rather than shipped as a symbols package, because
+  GitHub Packages hosts none, and stepping into the library from the
+  application is the point of keeping the stack managed. The version comes
+  only from a `v*` tag on a commit on `main`, so every published version
+  names a reviewed commit. GitHub Packages over nuget.org while the API still
+  moves: private by default, and moving to nuget.org later is one push step.
+  `Tensile.Interop.Blis` stays unpublished — it exists for benchmarks.
 
 - **Arithmetic reaches generic algorithms through a static-abstract
   interface per element type, not through `INumberBase<T>`.** An algorithm
@@ -1248,6 +1280,7 @@ dotnet test --solution Tensile.slnx -c Release             # unit suite (see not
 dotnet run -c Release --project tools/Tensile.Diagnostics  # what this host supports
 ./disasm.sh                                                # kernel codegen gate
 dotnet tests/Tensile.Fuzz/bin/Release/net10.0/Tensile.Fuzz.dll --self-check   # seed corpus replay
+tests/package-smoke.sh                                     # pack, inspect, install and run the package
 ```
 
 Note the `--solution` flag. Since the test packages moved to
@@ -1265,7 +1298,7 @@ afl), then `AFL_SKIP_BIN_CHECK=1 afl-fuzz -i bin/Corpus -o findings -t 10000
 -m none -- dotnet bin/Tensile.Fuzz.dll`. Nothing from the instrumented
 assembly may run before `Fuzzer.OutOfProcess.Run` attaches the coverage map.
 
-Four layers, deliberately overlapping:
+Five layers, deliberately overlapping:
 
 - **The xunit suite** (`tests/Tensile.Tests`) is the regression net. Every
   contract generic over the micro-kernel runs once per kernel, via an abstract
@@ -1284,6 +1317,10 @@ Four layers, deliberately overlapping:
   duration.
 - **`disasm.sh`** is the codegen gate, and the one CI job no test can replace:
   correctness is unaffected by a spill, only speed is.
+- **The package smoke test** (`tests/package-smoke.sh`) checks what ships
+  rather than what builds: the `.nupkg`'s contents, then the package installed
+  into a consumer with no project reference and no `InternalsVisibleTo`,
+  including that both DLLs embed a PDB with SourceLink. See finding 16.
 - **The fuzz harness** (`tests/Tensile.Fuzz`) finds the argument *pairs* the
   property tests did not enumerate. It found finding 11 in its first 90
   seconds. A hang is a finding as much as a crash is: the property is "returns

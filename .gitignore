@@ -14,3 +14,6 @@ kernel.asm
 # bench/run-measurements.sh writes each sitting here; the numbers worth
 # keeping go into CLAUDE.md with their conditions.
 bench/results/
+
+# tests/package-smoke.sh packs here.
+artifacts/

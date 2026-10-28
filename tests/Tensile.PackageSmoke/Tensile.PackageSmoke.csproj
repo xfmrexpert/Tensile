@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A consumer of the Tensile *package*, not the project: it references the
+    .nupkg that `dotnet pack` produced, restored from a local folder, and sees
+    only what a real consumer sees: no InternalsVisibleTo, no project
+    reference, no kernel assembly unless the package carries it. It is not in
+    Tensile.slnx; tests/package-smoke.sh packs, restores and runs it.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+
+    <!-- The version under test changes every run, so there is nothing stable
+         to lock; the package itself is what is being checked. -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+
+    <TensilePackageVersion Condition="'$(TensilePackageVersion)' == ''">0.0.0-dev</TensilePackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Tensile" Version="[$(TensilePackageVersion)]" />
+  </ItemGroup>
+
+</Project>

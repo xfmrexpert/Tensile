@@ -70,10 +70,64 @@ design, and the measurement that it costs nothing in throughput, are in
 | `src/Tensile.Interop.Blis` | The optional native BLIS binding, a separate package, for benchmarks. The core never references it. |
 | `tests/Tensile.Tests` | xunit.v3 suite. Contracts generic over the micro-kernel run once per kernel the host supports. |
 | `tests/Tensile.Fuzz` | SharpFuzz harness over the public surface, run nightly under afl++. |
+| `tests/Tensile.PackageSmoke` | A consumer of the packed `.nupkg`, run by `tests/package-smoke.sh` in CI and before every publish. |
 | `bench/Tensile.Benchmarks` | BenchmarkDotNet: GEMM against BLIS, kernel ceiling, threading, LU, API overhead, complex products and exponentials. |
 | `bench/run-measurements.sh` | Runs the measurements the project is waiting on, pinned or unpinned as each requires, into a dated directory. |
 | `tools/Tensile.Diagnostics` | `tensile-diag`: host ISA, BLIS dispatch, kernel correctness checks, LU phase split, estimator and exponential accuracy. |
 | `disasm.sh` | Dumps micro-kernel codegen and fails on accumulator spills. CI runs it. |
+
+## Using it in another project
+
+Releases are published to GitHub Packages. GitHub Packages needs
+authentication to restore, even for a public package, so a consuming project
+needs a token with the `read:packages` scope — a classic personal access token
+— and a `NuGet.config` beside its solution:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="tensile" value="https://nuget.pkg.github.com/xfmrexpert/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+    <packageSource key="tensile"><package pattern="Tensile" /></packageSource>
+  </packageSourceMapping>
+  <packageSourceCredentials>
+    <tensile>
+      <add key="Username" value="your-github-username" />
+      <add key="ClearTextPassword" value="%TENSILE_PACKAGES_TOKEN%" />
+    </tensile>
+  </packageSourceCredentials>
+</configuration>
+```
+
+with the token in the `TENSILE_PACKAGES_TOKEN` environment variable rather than
+in the file. The source mapping pins `Tensile` to this feed, so a package of
+the same name on nuget.org can never be picked up instead. Then:
+
+```
+dotnet add package Tensile --version 0.1.0
+```
+
+In another repository's GitHub Actions, grant that repository read access in
+the package's settings (Manage Actions access) and use the workflow's
+`GITHUB_TOKEN`; no personal token is needed there.
+
+The package is one `Tensile` package carrying two assemblies: `Tensile.dll`,
+which you reference, and the internal `Tensile.Kernels.dll` it calls. Both
+embed their PDB with SourceLink, so you can step into the library's source
+from your own debugger. It is pre-1.0: a minor version may change the API.
+
+To publish a release, tag a commit on `main` and push the tag:
+
+```
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/publish.yml` then tests, packs at the tag's version,
+installs the package into a throwaway consumer and runs it, and pushes it.
 
 ## Building and testing
 
@@ -83,6 +137,7 @@ The project targets `net10.0` and needs the .NET 10 SDK.
 dotnet test --solution Tensile.slnx -c Release              # the unit suite
 dotnet run -c Release --project tools/Tensile.Diagnostics   # what this host supports, and the reports
 ./disasm.sh                                                 # the codegen gate
+tests/package-smoke.sh                                      # pack, inspect, install and run the package
 ```
 
 Note `--solution`: under Microsoft.Testing.Platform the positional form

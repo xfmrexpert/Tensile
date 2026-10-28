@@ -1,0 +1,93 @@
+name: Publish
+
+# Publishes the Tensile package to GitHub Packages when a version tag is
+# pushed:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The version comes from the tag and from nowhere else, so every published
+# package names the commit it was built from. Pre-1.0, minor versions may
+# break the API.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  publish:
+    name: Test, pack and publish
+    runs-on: ubuntu-latest
+    # Pushing to GitHub Packages is the one write this workflow needs.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history, to check the tagged commit is on main.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Version from tag
+        id: version
+        # The tag is read through the environment and validated before use,
+        # never interpolated into the script, since a tag name is
+        # caller-controlled text.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "::error::Tag '$TAG' is not v<major>.<minor>.<patch>[-prerelease]"
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - name: Tagged commit is on main
+        # A package is published from reviewed code only: a tag on a branch
+        # that never merged does not ship.
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::The tagged commit is not on main."
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore Tensile.slnx --locked-mode
+
+      - name: Build
+        run: dotnet build Tensile.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Tensile.slnx -c Release --no-build --output Normal
+
+      - name: Pack, inspect, install and run
+        # The same check CI runs on every push, on the exact package that is
+        # about to be pushed.
+        run: tests/package-smoke.sh "${{ steps.version.outputs.version }}"
+
+      - name: Push to GitHub Packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        # --skip-duplicate makes a re-run of a published tag a no-op rather
+        # than a failure; a version, once pushed, is never replaced.
+        run: |
+          dotnet nuget push "artifacts/packages/Tensile.$VERSION.nupkg" \
+            --source "https://nuget.pkg.github.com/$OWNER/index.json" \
+            --api-key "$GITHUB_TOKEN" \
+            --skip-duplicate
