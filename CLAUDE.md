@@ -39,9 +39,11 @@ the managed-vs-native question is a first-class motivation, not just a means.
 
 A library plus tests, benchmarks and a diagnostics tool, `net10.0`,
 column-major throughout, unit row stride. `Matrix<T>` is generic over
-`unmanaged, INumberBase<T>`, so storage, views and the structure vocabulary
-work for any numeric type. Arithmetic exists for `double` and `Complex`, as
-extensions on the closed types over a generic interior: complex products are
+`unmanaged, INumberBase<T>`, so storage, views, element-wise arithmetic
+(`+`, `-`, scalar `*`, the `...InPlace` forms, transpose) and the structure
+vocabulary work for any numeric type. Everything else exists for `double` and
+`Complex`, as extensions on the closed types over a generic interior — the
+matrix product operator included, as a C# 14 extension operator: complex products are
 the 4M method over the real GEMM (`ComplexKernels`); LU (`BlockedLu`, behind
 one `LuDecomposition<T>`), the 1-norm estimator and condition estimate (one
 `NormEstimate` core), and both exponentials (`Expm`, `Expmv`) are each one
@@ -67,7 +69,7 @@ exists in full, as three assemblies:
 
 | Layer | Assembly / namespace | Holds |
 | --- | --- | --- |
-| Ergonomic | `Tensile` (public, no unsafe) | `Matrix<T>`, `MatrixView<T>`, structures, `LuDecomposition<T>` (and the generic `BlockedLu` behind its complex path), `Workspace`, the fluent operations, `ILinearOperator<T>`, `NormEstimate`, `MatrixExponential`, `MatrixExponentialAction` (real and complex) |
+| Ergonomic | `Tensile` (public, no unsafe) | `Matrix<T>`, `MatrixView<T>`, structures, `LuDecomposition<T>` (and the generic `BlockedLu` behind its complex path), `Workspace`, the fluent operations and operators, `ILinearOperator<T>`, `NormEstimate`, `MatrixExponential`, `MatrixExponentialAction` (real and complex) |
 | Kernels | `Tensile.Kernels` (all internal, unsafe) | Micro-kernels, packing, the GEMM drivers, LU, triangular solves, the streamed column/panel primitives, exact norms, the `KernelEntry` seam |
 | Interop | `Tensile.Interop.Blis` (separate package, public over views) | The optional BLIS binding, for benchmarks; the only native loading anywhere |
 
@@ -99,6 +101,8 @@ through `InternalsVisibleTo`; a consumer of the package cannot.
 | `src/Tensile/LuDecomposition.cs` | `LuDecomposition<T>`, the owning factorization for every element type; captures ||A||_1 before overwriting A; the `LuSolver<T>` seam that binds the element type to its solves at the factory |
 | `src/Tensile/BlockedLu.cs` | LU with partial pivoting written once over `T`/`IElementKernels<T>`: complex's only path, and for double the oracle the kernel LU's pivots must match |
 | `src/Tensile/MatrixOperations.cs` | Fluent extensions on `Matrix<double>` and the structured solves |
+| `src/Tensile/MatrixOperations.Arithmetic.cs` | Element-wise arithmetic in place (`AddInPlace`, `SubtractInPlace`, `AddScaledInPlace`, `ScaleInPlace`; generic, a view and a matrix receiver each), `Adjoint`, and the product operator `*` for `double` and `Complex`; overlap staging. The operators `+`, `-`, unary `-`, scalar `*` and `Transpose` are on `Matrix<T>`, `TransposeInto` on the views |
+| `src/Tensile/Elementwise.cs` | The column loops behind them: vectorized for `double`/`float` only, bit-identical to the scalar loop, checked scalar for integers |
 | `src/Tensile.Kernels/KernelEntry.cs` | The single seam where spans are pinned and become pointers; restates every shape precondition |
 | `src/Tensile.Kernels/Operand.cs` | `Operand` / `Target`: span + shape, length-checked on construction |
 | `src/Tensile.Kernels/Alignment.cs` | Cache-line offset for pinned arrays; the one address read on the allocation path |
@@ -107,7 +111,7 @@ through `InternalsVisibleTo`; a consumer of the package cannot.
 | `tests/Tensile.Fuzz/` | SharpFuzz harness: an input is a script of operations over hostile integers; the property is I5. Nightly under afl++; `--self-check` replays the seed corpus per PR |
 | `tests/Tensile.PackageSmoke/`, `tests/package-smoke.sh` | A consumer of the packed `.nupkg`, outside the solution, restoring only from the local pack folder into a throwaway cache; the script packs, inspects the contents (both DLLs, no dependencies, the source commit) and runs it. CI on every push; the publish workflow on the package it pushes |
 | `.github/workflows/publish.yml` | On a `v*` tag of a commit on `main`: test, pack at the tag's version, smoke-test, push to GitHub Packages |
-| `tests/Tensile.Tests/` | xunit.v3, 1636 tests; `Invariants/` is the secure-by-design spec, all green; kernel-generic contracts run per kernel via `IKernelCase` markers |
+| `tests/Tensile.Tests/` | xunit.v3, 1688 tests; `Invariants/` is the secure-by-design spec, all green; kernel-generic contracts run per kernel via `IKernelCase` markers |
 | `bench/run-measurements.sh` | Runs every measurement the open items wait on, each pinned or unpinned as it requires and at `--iterationCount 31`, into a dated results directory |
 | `bench/Tensile.Benchmarks/` | BenchmarkDotNet: GEMM vs BLIS (one class, interleaved — see finding 12), serial vs threaded, kernel ceiling, LU block-size sweep, API overhead (what the security migration cost), thread scaling, serial/threaded crossover, serial cache-blocking sweep with both driver and dispatch arms, 4M complex GEMM against real GEMM and the embedded route, native complex `Expm`/`Expmv` against the embedded route |
 | `tools/Tensile.Diagnostics/` | `tensile-diag`: ISA, BLIS dispatch, LU phase breakdown, estimator accuracy (real and complex), expm accuracy against a Taylor oracle, expmv cost against expm by operation count, native complex exponentials against the embedded route; and the codegen gate's process |
@@ -1109,6 +1113,22 @@ The complex estimator's exactness by ensemble is in finding 8.
   moves: private by default, and moving to nuget.org later is one push step.
   `Tensile.Interop.Blis` stays unpublished — it exists for benchmarks.
 
+- **Element-wise arithmetic is generic; products are not.** `+`, `-` and
+  scalar `*` need nothing from an element type but its own operators, which
+  `INumberBase<T>` supplies, so they are written once on `Matrix<T>` and hold
+  for `float`, `Half` and the integers too. The closed-type rule exists so that
+  a type with no arithmetic fails to compile; here no admissible type lacks
+  it. The vector path is `double`/`float` only, because `Vector<T>` integer
+  arithmetic wraps where this assembly's checked scalar loop throws, and an
+  operation whose overflow behaviour depended on the hardware would be a
+  defect. The matrix product `a * b` exists only for the GEMM types, which a
+  member of `Matrix<T>` cannot express, so it is a C# 14 extension operator
+  on the closed types; the analyzers misread extension blocks (CA1034, CA1708)
+  and are silenced at the two places they fire, not globally. In-place forms
+  come with both a view and a matrix receiver, because an extension method's
+  receiver does not take the implicit `Matrix<T>` -> view conversion. No
+  scalar division and no Hadamard product: nothing has asked for them.
+
 - **Arithmetic reaches generic algorithms through a static-abstract
   interface per element type, not through `INumberBase<T>`.** An algorithm
   takes `TKernels : struct, IElementKernels<T>` beside `T`, and the JIT
@@ -1331,7 +1351,23 @@ Guidance that has already been paid for once:
 - **Never assert bit-identical results between two code paths.** The blocked and
   unblocked LU paths agree to 7e-15, not to zero, because the blocked one sums
   its trailing update through GEMM. Assert the pivot sequence exactly (integer
-  choices) and the factors by tolerance.
+  choices) and the factors by tolerance. The exception proves the rule: where
+  every result element is one IEEE operation on both paths, as in the
+  element-wise arithmetic's vector and scalar loops, there is no order to
+  differ in, and anything short of bit-identity is a defect — so those tests
+  assert it.
+- **An overlap test has to run both directions.** With the operand ahead of
+  the target, a forward column walk reads every element before overwriting
+  it, so in-place arithmetic over shifted windows passes with the staging
+  deleted. Only the operand-behind cases fail without it; the first version
+  of `OverlappingWindowsAreStaged` had only the other kind, and a mutation
+  run is what showed it.
+- **A mutation run must rebuild after restoring.** Restoring the source with
+  `mv` from a backup taken before the mutant was built gives it an older
+  timestamp than the mutant's build output, so MSBuild's incremental check
+  keeps the mutant DLL and the "clean" run tests the mutant. `touch` the
+  restored files, or the last result of the run is a false failure — or
+  worse, a false pass.
 - **Test a heuristic by its invariants**, not by its accuracy. See finding 8.
 - **Port a numerical paper against an oracle, not against a reading of it.**
   `expm`'s coefficient tables are re-derived from their closed forms in the

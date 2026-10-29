@@ -177,14 +177,34 @@ internal static class Script
                     case 8:
                     {
                         // Overlapping copy within one matrix: the review finding's class.
+                        // The in-place arithmetic and the transpose stage an
+                        // overlapping operand the same way, so they run over the
+                        // same pair of windows. They read nothing further from the
+                        // input -- the target's corner is held rather than re-read
+                        // -- so every seed keeps its meaning.
                         MatrixView<double> source = a.Slice(reader.Small(), reader.Small(), reader.Small(), reader.Small());
-                        MatrixView<double> target = a.Slice(reader.Small(), reader.Small(), source.Rows, source.Columns);
+                        int row = reader.Small(), column = reader.Small();
+                        MatrixView<double> target = a.Slice(row, column, source.Rows, source.Columns);
                         source.CopyTo(target);
+
+                        target.AddInPlace(source);
+                        target.SubtractInPlace(source);
+                        target.AddScaledInPlace(0.5, source);
+                        target.ScaleInPlace(2.0);
+                        source.TransposeInto(a.Slice(row, column, source.Columns, source.Rows));
                         break;
                     }
 
                     case 9:
                         b = a.Multiply(b);
+
+                        // After the product, so a shape it rejects still
+                        // stops the case where it always did.
+                        _ = a + b;
+                        _ = a - b;
+                        _ = -a;
+                        _ = 0.5 * a;
+                        _ = a.Transpose();
                         break;
 
                     case 10:
@@ -213,9 +233,9 @@ internal static class Script
 
                     case 14:
                     {
-                        // The complex surface: the 4M product, the exponentials
-                        // through the real embedding, the action, the norm
-                        // estimate, and LU with its condition and solves. Hostile dimensions make most of these
+                        // The complex surface: the 4M product, the exponentials,
+                        // the action, the norm estimate, the operators and the
+                        // adjoint, and LU with its condition and solves. Hostile dimensions make most of these
                         // non-square and rejected, which is the point; t stays
                         // in [-2, 2] so a square case costs milliseconds rather
                         // than looking like a hang.
@@ -233,6 +253,8 @@ internal static class Script
                         _ = z.Expm();
                         _ = z.Expmv(z.ReadOnlyView, t);
                         _ = z.EstimateOneNorm(power: 2);
+                        _ = (z * z) - (Complex.ImaginaryOne * z);
+                        _ = z.Adjoint();
 
                         // Last, because a singular z throws from the solves,
                         // and anything after them would stop being reached.

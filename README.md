@@ -27,15 +27,19 @@ var z = Matrix.FromRows(new Complex[,] { { new(0, 1), 2.0 }, { -2.0, new(0, 1) }
 Matrix<Complex> y = z.Expmv(z.ReadOnlyView, t: 0.5); // exp(0.5 Z) Z, without forming exp
 ```
 
-**[API guide](docs/api.md)** — matrices and views, structure-typed dispatch,
-factorizations, norms and conditioning, workspaces and threading, matrix-free
-operators, the exponentials, and complex matrices.
+**[API guide](docs/api.md)** — matrices, elements and views, arithmetic,
+structure-typed dispatch, factorizations, norms and conditioning, workspaces
+and threading, matrix-free operators, the exponentials, and complex matrices.
 
 ## What is in it
 
 - **Matrices and views.** `Matrix<T>` owns pinned, 64-byte-aligned storage and
   is not disposable; `MatrixView<T>` is a bounds-checked `Span`-backed view.
   Column-major, unit row stride.
+- **Arithmetic.** `a + b`, `a - b`, `-a`, `2.5 * a` and the matrix product
+  `a * b`; in-place forms (`AddInPlace`, `AddScaledInPlace`, `ScaleInPlace`)
+  over matrices and slices; transpose and adjoint. Element-wise operations
+  work for any element type.
 - **GEMM.** BLIS-style blocking with AVX-512, AVX2/FMA and scalar
   micro-kernels selected per host, single- and multi-threaded.
 - **Complex products** by the 4M method over the real GEMM — not 3M, which

@@ -12,13 +12,15 @@ namespace Tensile;
 /// <see cref="Multiply(Matrix{double}, ReadOnlyMatrixView{double}, Workspace)"/>
 /// allocates a matrix per iteration.
 ///
-/// Arithmetic is supplied for <see cref="double"/>, and for
-/// <see cref="System.Numerics.Complex"/> where it exists so far (products,
-/// in <c>MatrixOperations.Complex.cs</c>). The extension targets are closed
-/// types -- <c>Matrix&lt;double&gt;</c>, <c>Matrix&lt;Complex&gt;</c> --
-/// rather than an open <c>Matrix&lt;T&gt;</c>, so adding a numeric type adds
-/// overloads without changing any signature here, and a type with no
-/// arithmetic fails to compile rather than at run time.
+/// Products, factorizations, norms and exponentials are supplied for
+/// <see cref="double"/> and <see cref="System.Numerics.Complex"/> (the complex
+/// ones in <c>MatrixOperations.Complex.cs</c>). Their extension targets are
+/// closed types -- <c>Matrix&lt;double&gt;</c>, <c>Matrix&lt;Complex&gt;</c>
+/// -- rather than an open <c>Matrix&lt;T&gt;</c>, so adding a numeric type
+/// adds overloads without changing any signature here, and a type with no
+/// arithmetic fails to compile rather than at run time. Element-wise
+/// arithmetic, which every <c>INumberBase&lt;T&gt;</c> supports, is generic
+/// (<c>MatrixOperations.Arithmetic.cs</c>).
 ///
 /// No method here touches a pointer, and none could: this assembly compiles
 /// with unsafe code disallowed. Anything that needs one hands a view to the

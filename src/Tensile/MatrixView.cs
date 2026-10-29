@@ -170,6 +170,12 @@ public readonly ref struct MatrixView<T> where T : unmanaged
         return result;
     }
 
+    /// <summary>Write the transpose of this window into <paramref name="destination"/>.</summary>
+    /// <param name="destination">A <see cref="Columns"/> x <see cref="Rows"/> window. May overlap this one.</param>
+    /// <exception cref="ArgumentException">The destination is not the transposed shape.</exception>
+    /// <exception cref="AllocationLimitException">The windows overlap and a staging copy would exceed <see cref="TensileLimits.MaxElements"/>.</exception>
+    public void TransposeInto(MatrixView<T> destination) => ((ReadOnlyMatrixView<T>)this).TransposeInto(destination);
+
     /// <summary>Narrow to a read-only window over the same storage.</summary>
     public static implicit operator ReadOnlyMatrixView<T>(MatrixView<T> view) =>
         new(view._buffer, view.Shape);
@@ -242,6 +248,37 @@ public readonly ref struct ReadOnlyMatrixView<T> where T : unmanaged
         if (sub.IsEmpty) return new ReadOnlyMatrixView<T>(_buffer.Slice(0, 0), sub);
 
         return new ReadOnlyMatrixView<T>(_buffer.Slice(Shape.OffsetOf(row, column), sub.RequiredExtent), sub);
+    }
+
+    /// <summary>Write the transpose of this window into <paramref name="destination"/>.</summary>
+    /// <param name="destination">A <see cref="Columns"/> x <see cref="Rows"/> window. May overlap this one.</param>
+    /// <exception cref="ArgumentException">The destination is not the transposed shape.</exception>
+    /// <exception cref="AllocationLimitException">The windows overlap and a staging copy would exceed <see cref="TensileLimits.MaxElements"/>.</exception>
+    public void TransposeInto(MatrixView<T> destination)
+    {
+        if (destination.Rows != Columns || destination.Columns != Rows)
+        {
+            throw new ArgumentException(
+                $"Shape mismatch: the transpose of a {Rows}x{Columns} window is {Columns}x{Rows}, destination is {destination.Rows}x{destination.Columns}.",
+                nameof(destination));
+        }
+
+        if (IsEmpty) return;
+
+        // Any overlap is unsafe here, even the exact one: transposing a square
+        // window onto itself writes (j, i) before (i, j) has been read. So any
+        // shared storage stages the source, whatever its position.
+        ReadOnlyMatrixView<T> source = _buffer.Overlaps(destination.Buffer)
+            ? Bind(ToArray(), new MatrixShape(Rows, Columns))
+            : this;
+
+        // Read down the source's contiguous columns, write along the
+        // destination's rows.
+        for (int j = 0; j < Columns; j++)
+        {
+            ReadOnlySpan<T> column = source.Column(j);
+            for (int i = 0; i < column.Length; i++) destination[j, i] = column[i];
+        }
     }
 
     /// <summary>Copy the window into a fresh column-major array, packed with no stride padding.</summary>

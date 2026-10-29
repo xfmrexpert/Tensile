@@ -37,6 +37,19 @@ public class EmptyShapeTests
         _ = wide.FrobeniusNorm();
         _ = UpperTriangular.UnreferencedPartIsZero(wide.ReadOnlyView);
 
+        // Element-wise arithmetic and transposes: each walks columns.
+        _ = wide + wide;
+        _ = wide - wide;
+        _ = -wide;
+        _ = 2.0 * wide;
+        wide.AddInPlace(wide);
+        wide.SubtractInPlace(wide);
+        wide.AddScaledInPlace(2.0, wide);
+        wide.ScaleInPlace(2.0);
+        _ = wide.Transpose();
+        wide.TransposeInto(tall.View);
+        tall.TransposeInto(wide.View);
+
         // 0 x k times k x 0: an empty result with a huge inner dimension. (The
         // other order would ask for a Huge x Huge result, which is an invalid
         // shape and rejected as one -- validity first, cost second.)

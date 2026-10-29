@@ -62,6 +62,15 @@ var v = Matrix.FromRows(new Complex[,] { { 1.0 }, { 0.0 } });
 Matrix<Complex> ev = z.Expmv(v.ReadOnlyView);
 Check(Complex.Abs(ev[0, 0] - Complex.FromPolarCoordinates(1.0, 0.5)) < 1e-14, "complex expmv");
 
+// The operators. The matrix product is a C# 14 extension operator, which a
+// consumer finds only through the package's metadata, so it is checked here
+// as well as in the suite.
+Matrix<double> r = (a * x) - b;
+Check(r.FrobeniusNorm() < 1e-12 && (2.0 * a)[0, 0] == 8.0 && (-a)[1, 0] == -1.0, "real operators");
+
+Matrix<Complex> zz = (z * z) + z.Adjoint();
+Check(zz[0, 0] == new Complex(-0.25, -0.5), "complex operators and adjoint");
+
 Console.WriteLine(failures == 0 ? "package smoke test passed" : $"package smoke test FAILED ({failures})");
 return failures == 0 ? 0 : 1;
 

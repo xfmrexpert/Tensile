@@ -18,6 +18,8 @@ var z = Matrix.FromRows(new Complex[,] { { new(0, 1), 2.0 }, { -2.0, new(0, 1) }
 Matrix<Complex> y = z.Expmv(z.ReadOnlyView, t: 0.5); // exp(0.5 Z) Z, without forming exp
 ```
 
+- **Arithmetic**: `a + b`, `a - b`, `2.5 * a`, the matrix product `a * b`,
+  in-place forms over matrices and slices, transpose and adjoint.
 - **GEMM** with BLIS-style blocking and AVX-512, AVX2/FMA and scalar
   micro-kernels chosen per host; single- and multi-threaded. At parity with
   BLIS on one core from n = 256 up.
