@@ -29,13 +29,41 @@
     <TieredPGO>false</TieredPGO>
 
     <PackageId>Tensile</PackageId>
-    <Description>Dense linear algebra for .NET: blocked GEMM with hand-written micro-kernels, LU with partial pivoting, and 1-norm condition estimation.</Description>
-    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <Description>Dense linear algebra for .NET, real and complex, in managed code: blocked GEMM with hand-written AVX-512/AVX2 micro-kernels at parity with BLIS on one core, LU with partial pivoting, 1-norm condition estimation, and the matrix exponential and its action (Al-Mohy &amp; Higham). No native dependencies.</Description>
+    <PackageTags>linear-algebra;matrix;gemm;lu;complex;matrix-exponential;expm;numerics;simd</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Tensile.Kernels.dll travels inside this package rather than as a
+         package of its own: see IncludeKernelAssembly below. -->
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeKernelAssembly</TargetsForTfmSpecificBuildOutput>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Tensile.Kernels/Tensile.Kernels.csproj" />
+    <!-- PrivateAssets: the kernel assembly is not a package dependency. Without
+         it, pack writes a dependency on a "Tensile.Kernels" package that does
+         not exist and leaves the DLL out, so the package cannot be restored,
+         which is what it did until the package smoke test existed. -->
+    <ProjectReference Include="../Tensile.Kernels/Tensile.Kernels.csproj" PrivateAssets="all" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="PACKAGE.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+
+  <!--
+    One package, two assemblies. The split between the public assembly (no
+    unsafe code) and the internal kernel assembly (all of it) is a security
+    property, docs/security-design.md section 5.6, and it survives packaging:
+    both DLLs go into lib/, so a consumer references Tensile.dll and reaches
+    the kernels only through it.
+  -->
+  <Target Name="IncludeKernelAssembly" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage
+        Include="@(ReferenceCopyLocalPaths)"
+        Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference' and '%(ReferenceCopyLocalPaths.Filename)' == 'Tensile.Kernels'" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <!-- The tests reach internal members such as the view buffers and the

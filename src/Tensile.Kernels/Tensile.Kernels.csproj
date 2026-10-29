@@ -17,7 +17,8 @@
          rules it adds are about pointer use, which is this assembly's job. -->
     <AnalysisLevel>latest-recommended</AnalysisLevel>
 
-    <!-- Ships inside the Tensile package rather than as one of its own. -->
+    <!-- Ships inside the Tensile package rather than as one of its own; the
+         Tensile project's IncludeKernelAssembly target is what puts it there. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

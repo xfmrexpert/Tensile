@@ -335,7 +335,11 @@ unsafe code. That is I4, held by the compiler rather than by review. With every
 kernel type `internal`, referencing the DLL gains a consumer nothing short of
 reflection.
 
-`Tensile.Kernels` ships inside the same NuGet package as `Tensile`.
+`Tensile.Kernels` ships inside the same NuGet package as `Tensile`: both DLLs
+sit in its `lib/` folder, and the package declares no dependency. (This was
+the intent from the start and was not true until `tests/package-smoke.sh`
+installed the package and found the kernel assembly missing; see CLAUDE.md
+finding 16.)
 
 The `normest1` driver landed on the safe side of the line, not the kernel side
 the first draft of this table put it on. It is bookkeeping — sign matrices,

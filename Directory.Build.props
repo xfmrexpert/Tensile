@@ -26,4 +26,38 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
+  <!--
+    Package metadata, for the projects that pack (Tensile, and Tensile.Interop.Blis
+    if anyone packs it locally). The version here is a placeholder: the publish
+    workflow sets the real one from the release tag, so a package can only
+    carry a version that names a commit.
+  -->
+  <PropertyGroup>
+    <Version>0.0.0-dev</Version>
+    <Authors>Tim Raymond</Authors>
+    <Copyright>Copyright (c) 2026, Tim Raymond</Copyright>
+    <PackageProjectUrl>https://github.com/xfmrexpert/Tensile</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/xfmrexpert/Tensile</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+
+    <!--
+      Debuggable from a consuming project: SourceLink (built into the .NET SDK
+      for GitHub repositories) records the commit and the URL of every source
+      file, and the PDB is embedded in each DLL rather than shipped as a
+      separate symbols package, because GitHub Packages does not host symbol
+      packages. Stepping into Tensile from the application then fetches the
+      exact source the package was built from.
+    -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!-- Deterministic paths in CI builds, so a package rebuilt from the same
+       commit is the same package. Local builds keep real paths for debugging. -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
 </Project>

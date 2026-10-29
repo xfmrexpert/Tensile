@@ -61,6 +61,28 @@ jobs:
         # runs that actually mutate them.
         run: dotnet tests/Tensile.Fuzz/bin/Release/net10.0/Tensile.Fuzz.dll --self-check
 
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack, inspect, install and run
+        # The package is checked as a consumer gets it: packed, its contents
+        # inspected (both assemblies, no dependencies, the source commit),
+        # then installed from a local folder into a throwaway project that
+        # sees only the public surface. The unit suite cannot catch a broken
+        # package, because it references the projects; this can, and the
+        # publish workflow runs the same script on the package it pushes.
+        run: tests/package-smoke.sh "0.0.0-ci.${{ github.run_number }}"
+
   codegen:
     name: Micro-kernel codegen
     runs-on: ubuntu-latest

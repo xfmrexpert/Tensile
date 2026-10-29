@@ -20,10 +20,14 @@ namespace Tensile;
 ///   double-free, no leak when a caller forgets. The storage is reclaimed when
 ///   the last reference to it is gone, like any other array.
 ///
-/// The type is generic so that storage, views, slicing and the structure
-/// vocabulary are written once. Arithmetic is currently supplied only for
-/// <see cref="double"/>, through extension methods on the closed type, which is
-/// why <c>Matrix&lt;float&gt;</c> compiles and holds data but has nothing to
+/// The type is generic so that storage, views, slicing, element-wise
+/// arithmetic and the structure vocabulary are written once. Element-wise
+/// arithmetic (the operators below, and the <c>...InPlace</c> methods on
+/// <see cref="MatrixOperations"/>) needs only what <see cref="INumberBase{T}"/>
+/// supplies, so it works for every element type. Products, factorizations,
+/// norms and exponentials are supplied for <see cref="double"/> and
+/// <see cref="Complex"/>, through extension methods on the closed types, which
+/// is why <c>Matrix&lt;float&gt;</c> can be added and scaled but has nothing to
 /// multiply it with yet.
 ///
 /// A pinned array is never compacted, so a hot loop that creates thousands of
@@ -153,6 +157,82 @@ public sealed class Matrix<T> where T : unmanaged, INumberBase<T>
 
     /// <summary>The elements in column-major order, packed with no stride padding.</summary>
     public T[] ToArray() => View.ToArray();
+
+    /// <summary>The transpose, as a new matrix.</summary>
+    public Matrix<T> Transpose()
+    {
+        var result = new Matrix<T>(Columns, Rows);
+        ReadOnlyView.TransposeInto(result.View);
+        return result;
+    }
+
+    /// <summary>Write the transpose into <paramref name="destination"/>.</summary>
+    /// <param name="destination">A <see cref="Columns"/> x <see cref="Rows"/> window. May overlap this matrix.</param>
+    /// <exception cref="ArgumentException">The destination is not the transposed shape.</exception>
+    /// <exception cref="AllocationLimitException">The windows overlap and a staging copy would exceed <see cref="TensileLimits.MaxElements"/>.</exception>
+    public void TransposeInto(MatrixView<T> destination) => ReadOnlyView.TransposeInto(destination);
+
+    /// <summary>A + B, element by element, as a new matrix.</summary>
+    /// <param name="a">Left operand.</param>
+    /// <param name="b">Right operand, the same shape.</param>
+    /// <exception cref="ArgumentException">The shapes differ.</exception>
+    public static Matrix<T> operator +(Matrix<T> a, Matrix<T> b)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+        ArgumentNullException.ThrowIfNull(b);
+        MatrixOperations.RequireSameShape(a.Shape, b.Shape, nameof(b));
+
+        var sum = a.Clone();
+        sum.AddInPlace(b.ReadOnlyView);
+        return sum;
+    }
+
+    /// <summary>A - B, element by element, as a new matrix.</summary>
+    /// <param name="a">Left operand.</param>
+    /// <param name="b">Right operand, the same shape.</param>
+    /// <exception cref="ArgumentException">The shapes differ.</exception>
+    public static Matrix<T> operator -(Matrix<T> a, Matrix<T> b)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+        ArgumentNullException.ThrowIfNull(b);
+        MatrixOperations.RequireSameShape(a.Shape, b.Shape, nameof(b));
+
+        var difference = a.Clone();
+        difference.SubtractInPlace(b.ReadOnlyView);
+        return difference;
+    }
+
+    /// <summary>-A, as a new matrix.</summary>
+    /// <param name="a">The operand.</param>
+    public static Matrix<T> operator -(Matrix<T> a)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+
+        var negated = a.Clone();
+        if (!negated.IsEmpty)
+        {
+            for (int j = 0; j < negated.Columns; j++) Elementwise.Negate(negated.Column(j));
+        }
+
+        return negated;
+    }
+
+    /// <summary>alpha*A, as a new matrix.</summary>
+    /// <param name="alpha">The scalar.</param>
+    /// <param name="a">The matrix.</param>
+    public static Matrix<T> operator *(T alpha, Matrix<T> a)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+
+        var scaled = a.Clone();
+        scaled.ScaleInPlace(alpha);
+        return scaled;
+    }
+
+    /// <summary>A*alpha, as a new matrix: the same as alpha*A.</summary>
+    /// <param name="a">The matrix.</param>
+    /// <param name="alpha">The scalar.</param>
+    public static Matrix<T> operator *(Matrix<T> a, T alpha) => alpha * a;
 
     /// <summary>A writable view over the whole matrix; the same as <see cref="View"/>.</summary>
     /// <param name="matrix">The matrix to view.</param>

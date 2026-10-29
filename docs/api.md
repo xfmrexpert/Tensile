@@ -1,6 +1,6 @@
 # Tensile API
 
-Dense linear algebra for .NET. Column-major, double precision, with hand-written
+Dense linear algebra for .NET, real and complex. Column-major, with hand-written
 micro-kernels underneath.
 
 Everything public is in one namespace, `Tensile`, in one assembly that is
@@ -31,8 +31,9 @@ var a = Matrix.FromRows(new[,]
 
 var b = Matrix.FromColumnMajor<double>(2, 1, [1.0, 2.0]);
 
-Matrix<double> x = a.Solve(b);        // LU with partial pivoting
-Matrix<double> product = a.Multiply(x);   // blocked GEMM
+Matrix<double> x = a.Solve(b);            // LU with partial pivoting
+Matrix<double> residual = (a * x) - b;    // blocked GEMM, then element-wise
+double r = a[0, 1];                       // elements by [row, column]
 ```
 
 Nothing here is `IDisposable`. A `Matrix<T>` owns a pinned managed array, and a
@@ -45,22 +46,80 @@ free, no leak from a forgotten `using`.
 
 ## Matrices and views
 
-`Matrix<T>` owns 64-byte aligned native memory in column-major order. It is
-generic over `unmanaged, INumberBase<T>`, so `Matrix<float>` and
-`Matrix<Half>` hold data today even though the arithmetic below is
-`double`-only.
+`Matrix<T>` owns its elements in column-major order, in a managed array on the
+pinned object heap with the first element on a 64-byte boundary. It is generic
+over `unmanaged, INumberBase<T>`: storage, views and element-wise arithmetic
+work for any numeric type, and products, factorizations, norms and
+exponentials exist for `double` and `Complex`.
+
+### Making one
 
 ```csharp
-var m = new Matrix<double>(rows: 100, columns: 40);
+var m = new Matrix<double>(rows: 100, columns: 40);    // zeroed
 var z = Matrix.Zeros<double>(8, 8);
 var i = Matrix.Identity<double>(8);
-var f = Matrix.FromColumnMajor<double>(2, 2, [1, 2, 3, 4]);
+
+var r = Matrix.FromRows(new[,]                         // written as it reads
+{
+    { 1.0, 2.0, 3.0 },
+    { 4.0, 5.0, 6.0 },
+});
+var f = Matrix.FromColumnMajor<double>(2, 3, [1, 4, 2, 5, 3, 6]);   // the same matrix
+
+var copy = m.Clone();                                   // independent storage
+var block = Matrix.From(m.ReadOnlyView.Slice(0, 0, 10, 10));   // a copy of a window
 ```
+
+`FromColumnMajor` is a straight copy and is the one for bulk data;
+`FromRows` transposes on the way in and is for literals and tests. `Zeros` and
+`Identity` need the element type spelled out, having no argument to infer it
+from, and so does `FromColumnMajor` given a collection expression `[...]`,
+which has no type of its own.
+
+`Rows`, `Columns`, `Shape`, `IsSquare` and `IsEmpty` describe a matrix.
+`ToArray()` copies the elements out, column by column, with no stride padding.
+
+### Reading and writing elements
+
+The indexer takes `[row, column]`, zero-based, and returns a **reference** to
+the element, so it reads, writes and updates in place:
+
+```csharp
+double x = m[2, 3];          // read
+m[2, 3] = 1.5;               // write
+m[2, 3] *= 2.0;              // update without a second lookup
+ref double e = ref m[0, 0];  // hold the reference
+
+m.Fill(0.0);                 // every element
+```
+
+Every access is bounds-checked: an index outside the matrix throws
+`ArgumentOutOfRangeException`, never touches memory outside it. For a loop over
+every element, put the row index innermost — that walks memory in order — or
+take a whole column as a span (below), which costs one check per column rather
+than one per element.
+
+### Views
 
 A **view** is a borrowed window. `MatrixView<T>` and `ReadOnlyMatrixView<T>` are
 `ref struct`s, so the compiler prevents them being stored in a field, boxed, or
 captured by an async method — the usual ways a borrowed pointer outlives its
-owner.
+owner. A view has the same indexer, `Rows`, `Columns`, `Column`, `Slice` and
+`ToArray` as a matrix — read-only references and spans on the read-only kind,
+and `Fill` on the writable one — and a `Matrix<T>` converts to either kind
+implicitly, so a matrix can be passed wherever a view is expected.
+
+```csharp
+MatrixView<double> block = m.Slice(row: 10, column: 5, rows: 20, columns: 10);
+block.Fill(0.0);                 // writes through to m
+block[0, 0] = 1.0;               // m[10, 5]
+
+Span<double> column = m.Column(3);   // contiguous, and therefore free
+```
+
+There is deliberately no `Row`. In column-major storage a column is contiguous
+and a row is not, so a `Row` returning a span would be a lie and one returning a
+copy would hide its cost.
 
 There is no way to build a view from a raw pointer. A view comes either from a
 `Matrix<T>` or from **binding** a span to a `MatrixShape`, which checks that the
@@ -79,25 +138,104 @@ constructed. If you genuinely have a `double*`, write `new Span<double>(p, len)`
 yourself: that is your `unsafe` block, correctly attributed, and it forces you to
 state the length, which is exactly the fact the library needs.
 
-```csharp
-MatrixView<double> block = m.Slice(row: 10, column: 5, rows: 20, columns: 10);
-block.Fill(0.0);                 // writes through to m
-
-Span<double> column = m.Column(3);   // contiguous, and therefore free
-```
-
-There is deliberately no `Row`. In column-major storage a column is contiguous
-and a row is not, so a `Row` returning a span would be a lie and one returning a
-copy would hide its cost.
-
 `Stride` may exceed `Rows`; a slice keeps its parent's stride rather than
 repacking. Every operation handles a strided view, and the tests check that
 padding is never written.
+
+### Copying
+
+```csharp
+source.CopyTo(destination);      // same shape, any strides
+```
 
 `CopyTo` is safe between overlapping windows — two slices of one matrix, say —
 and stages through a temporary when it detects an overlap. Copying column by
 column would otherwise destroy a source column before reading it, since
 `Span.CopyTo` only protects each column individually.
+
+---
+
+## Arithmetic
+
+### Operators
+
+```csharp
+var a = Matrix.FromRows(new[,] { { 4.0, 1.0 }, { 1.0, 3.0 } });
+var b = Matrix.Identity<double>(2);
+
+Matrix<double> sum        = a + b;
+Matrix<double> difference = a - b;
+Matrix<double> negated    = -a;
+Matrix<double> scaled     = 2.5 * a;      // or a * 2.5
+Matrix<double> product    = a * b;        // the matrix product, not element-wise
+```
+
+Each operator returns a new matrix and leaves its operands alone. Addition and
+subtraction need equal shapes and throw `ArgumentException` otherwise, as does
+a product whose inner dimensions disagree. The scalar converts to the element
+type in the usual way, so `2 * a` works on a `Matrix<double>` and `z * 2.0` on
+a `Matrix<Complex>`.
+
+`+`, `-` and scalar `*` are element-wise and generic: they exist for every
+`Matrix<T>`, including `float`, `Half` and the integer types. The matrix
+product `a * b` exists for `double` and `Complex` — it is `a.Multiply(b)` on
+`Workspace.Shared`, so it is the blocked GEMM, threaded above the crossover —
+and reaching for it on another element type is a compile error rather than a
+run-time one.
+
+There is no element-wise (Hadamard) product and no scalar division; scale by
+the reciprocal.
+
+Operators allocate a matrix per call, which is the price of reading like the
+mathematics. A residual is fine as `(a * x) - b`; a loop that runs a thousand
+times should use the forms below.
+
+### In place
+
+Each operation that writes into storage you already own has a matrix form and
+a view form, so it applies equally to a whole matrix and to a slice:
+
+```csharp
+y.AddInPlace(x);                  // y := y + x
+y.SubtractInPlace(x);             // y := y - x
+y.AddScaledInPlace(alpha, x);     // y := y + alpha x   (BLAS axpy)
+y.ScaleInPlace(alpha);            // y := alpha y
+
+m.Slice(0, 0, 4, 4).ScaleInPlace(0.5);   // a corner of m, nothing else
+
+a.MultiplyInto(b, c.View);                       // c := A B
+a.MultiplyInto(b, c.View, alpha: 2, beta: 1);    // c := c + 2 A B
+```
+
+To form c := a + b without allocating, copy and accumulate:
+`a.View.CopyTo(c); c.AddInPlace(b);`.
+
+`x` may overlap `y`. Combining a window with itself (`y.AddInPlace(y)`) needs no
+copy, since every element is read before it is written. Two windows of one
+matrix shifted against each other are staged through a temporary first, as
+`CopyTo` does, so the result is always what a separate copy of `x` would give.
+
+Each element is one rounded operation — `y + alpha*x` is a multiply and then an
+add, never fused — and `double` and `float` are vectorized without changing
+that: the result is the same bit for bit as the scalar loop. Integer element
+types take the scalar loop only, because this assembly is compiled with
+overflow checking and a vector add would wrap where the scalar one throws
+`OverflowException`.
+
+### Transpose and adjoint
+
+```csharp
+Matrix<double> t = a.Transpose();      // a new n x m matrix
+a.TransposeInto(t.View);               // into storage you own; may overlap a
+
+Matrix<Complex> h = z.Adjoint();       // conjugate transpose, Zᴴ
+Matrix<double> same = a.Adjoint();     // for a real matrix, the transpose
+```
+
+`TransposeInto` stages its source whenever the two windows share storage,
+including the square case `a.TransposeInto(a.View)`, where writing (j, i)
+before reading (i, j) would otherwise lose it. There is no transposed *view*:
+transposing is always a copy, and the products take no transpose flags.
 
 ---
 
@@ -264,9 +402,10 @@ the multi-threaded GEMM already uses every core from *within* one call, so
 running several concurrently usually buys nothing — give each thread its own
 workspace only if you have measured that it helps.
 
-Small problems fall back to the serial path automatically. Fork/join costs more
-than it saves below roughly 4×10⁶ flops, a threshold derived from barrier cost
-rather than measured.
+Small problems fall back to the serial path automatically. For an m×k by k×n
+product the dispatch threads only when m·n·k reaches 2²⁴ (16,777,216): measured,
+serial wins below it, threading wins at and above it, and the shape of the
+operands does not move the crossover.
 
 ---
 
@@ -615,5 +754,9 @@ exactly, and apply the operator without it.
 - **Arithmetic for any type but `double` and `Complex`.** Storage is generic;
   operations exist for those two. LU is written once over the element type, so
   a third type needs its element kernels, not a new factorization.
-- **In-place transpose**, and a transposed GEMM. The primitive layer has no
-  transpose flags at all, by design.
+- **A transposed view**, and a transposed GEMM. `Transpose` and
+  `TransposeInto` copy; the primitive layer has no transpose flags at all, by
+  design.
+- **Element-wise products and functions**: a Hadamard product, element-wise
+  division, `Map`. Addition, subtraction and scaling are the whole element-wise
+  vocabulary so far.
